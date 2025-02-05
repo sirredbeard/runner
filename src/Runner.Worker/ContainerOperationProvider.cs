@@ -46,9 +46,9 @@ namespace GitHub.Runner.Worker
         public async Task StartContainersAsync(IExecutionContext executionContext, object data)
         {
             Trace.Entering();
-            if (!Constants.Runner.Platform.Equals(Constants.OSPlatform.Linux))
+            if (!(Constants.Runner.Platform.Equals(Constants.OSPlatform.Linux) || Constants.Runner.Platform.Equals(Constants.OSPlatform.Windows)))
             {
-                throw new NotSupportedException("Container operations are only supported on Linux runners");
+                throw new NotSupportedException("Container operations are only supported on Windows and Linux");
             }
             ArgUtil.NotNull(executionContext, nameof(executionContext));
             List<ContainerInfo> containers = data as List<ContainerInfo>;
@@ -309,20 +309,33 @@ namespace GitHub.Runner.Worker
 
             var tempHomeDirectory = Path.Combine(HostContext.GetDirectory(WellKnownDirectory.Temp), "_github_home");
             Directory.CreateDirectory(tempHomeDirectory);
-            container.MountVolumes.Add(new MountVolume(tempHomeDirectory, "/github/home"));
-            container.AddPathTranslateMapping(tempHomeDirectory, "/github/home");
+            #if OS_WINDOWS
+                container.MountVolumes.Add(new MountVolume(tempHomeDirectory, "C:\\ghhome"));
+                container.AddPathTranslateMapping(tempHomeDirectory, "C:\\ghhome");
+            #else
+                container.MountVolumes.Add(new MountVolume(tempHomeDirectory, "/github/home"));
+                container.AddPathTranslateMapping(tempHomeDirectory, "/github/home");
+            #endif
             container.ContainerEnvironmentVariables["HOME"] = container.TranslateToContainerPath(tempHomeDirectory);
 
             var tempWorkflowDirectory = Path.Combine(HostContext.GetDirectory(WellKnownDirectory.Temp), "_github_workflow");
             Directory.CreateDirectory(tempWorkflowDirectory);
+#if OS_WINDOWS
+                container.MountVolumes.Add(new MountVolume(tempWorkflowDirectory, "C:\\ghworkflow"));
+                container.AddPathTranslateMapping(tempWorkflowDirectory, "C:\\ghworkflow");
+#else
             container.MountVolumes.Add(new MountVolume(tempWorkflowDirectory, "/github/workflow"));
             container.AddPathTranslateMapping(tempWorkflowDirectory, "/github/workflow");
-
+#endif
             container.ContainerWorkDirectory = container.TranslateToContainerPath(workingDirectory);
             if (!FeatureManager.IsContainerHooksEnabled(executionContext.Global.Variables))
             {
+                #if OS_WINDOWS
+                container.ContainerEntryPointArgs = "\"ping\" \"-t\" \"localhost\"";
+                #else
                 container.ContainerEntryPoint = "tail";
                 container.ContainerEntryPointArgs = "\"-f\" \"/dev/null\"";
+                #endif
             }
         }
 
@@ -556,28 +569,28 @@ namespace GitHub.Runner.Worker
             }
 #endif
 
-#if OS_WINDOWS
-#pragma warning disable CA1416
-            // Check OS version (Windows server 1803 is required)
-            object windowsInstallationType = Registry.GetValue(@"HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows NT\CurrentVersion", "InstallationType", defaultValue: null);
-            ArgUtil.NotNull(windowsInstallationType, nameof(windowsInstallationType));
-            object windowsReleaseId = Registry.GetValue(@"HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows NT\CurrentVersion", "ReleaseId", defaultValue: null);
-            ArgUtil.NotNull(windowsReleaseId, nameof(windowsReleaseId));
-            executionContext.Debug($"Current Windows version: '{windowsReleaseId} ({windowsInstallationType})'");
-
-            if (int.TryParse(windowsReleaseId.ToString(), out int releaseId))
-            {
-                if (!windowsInstallationType.ToString().StartsWith("Server", StringComparison.OrdinalIgnoreCase) || releaseId < 1803)
-                {
-                    throw new NotSupportedException("Container feature requires Windows Server 1803 or higher.");
-                }
-            }
-            else
-            {
-                throw new ArgumentOutOfRangeException(@"HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows NT\CurrentVersion\ReleaseId");
-            }
-#pragma warning restore CA1416
-#endif
+// #if OS_WINDOWS
+// #pragma warning disable CA1416
+//            // Check OS version (Windows server 1803 is required)
+//            object windowsInstallationType = Registry.GetValue(@"HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows NT\CurrentVersion", "InstallationType", defaultValue: null);
+//            ArgUtil.NotNull(windowsInstallationType, nameof(windowsInstallationType));
+//            object windowsReleaseId = Registry.GetValue(@"HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows NT\CurrentVersion", "ReleaseId", defaultValue: null);
+//            ArgUtil.NotNull(windowsReleaseId, nameof(windowsReleaseId));
+//            executionContext.Debug($"Current Windows version: '{windowsReleaseId} ({windowsInstallationType})'");
+//
+//            if (int.TryParse(windowsReleaseId.ToString(), out int releaseId))
+//            {
+//                if (!windowsInstallationType.ToString().StartsWith("Server", StringComparison.OrdinalIgnoreCase) || releaseId < 1803)
+//                {
+//                    throw new NotSupportedException("Container feature requires Windows Server 1803 or higher.");
+//                }
+//            }
+//            else
+//            {
+//                throw new ArgumentOutOfRangeException(@"HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows NT\CurrentVersion\ReleaseId");
+//            }
+//#pragma warning restore CA1416
+//#endif
 
             // Check docker client/server version
             executionContext.Output("##[group]Checking docker version");
