@@ -235,19 +235,19 @@ heading "Pre-cache external resources for $RUNTIME_ID package ..."
 bash ./Misc/externals.sh $RUNTIME_ID "Pre-Cache" || checkRC "externals.sh Pre-Cache"
 
 if [[ "$CURRENT_PLATFORM" == 'windows' ]]; then
-    vswhere=$(find "$DOWNLOAD_DIR" -name vswhere.exe | head -1)
-    vs_location=$("$vswhere" -prerelease -latest -property installationPath)
-    msbuild_location="$vs_location""\MSBuild\15.0\Bin\msbuild.exe"
+    #vswhere=$(find "$DOWNLOAD_DIR" -name vswhere.exe | head -1)
+    #vs_location=$("$vswhere" -prerelease -latest -property installationPath)
+    #msbuild_location="$vs_location""\MSBuild\15.0\Bin\msbuild.exe"
 
-    if [[ ! -e "${msbuild_location}" ]]; then
-        msbuild_location="$vs_location""\MSBuild\Current\Bin\msbuild.exe"
+    #if [[ ! -e "${msbuild_location}" ]]; then
+    #    msbuild_location="$vs_location""\MSBuild\Current\Bin\msbuild.exe"
 
-        if [[ ! -e "${msbuild_location}" ]]; then
-            failed "Can not find msbuild location, failing build"
-        fi
-    fi
+    #    if [[ ! -e "${msbuild_location}" ]]; then
+    #        failed "Can not find msbuild location, failing build"
+    #    fi
+    #fi
 
-    export DesktopMSBuild="$msbuild_location"
+    export DesktopMSBuild="C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\MSBuild\Current\Bin\MSBuild.exe"
 fi
 
 case $DEV_CMD in
