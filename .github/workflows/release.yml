@@ -45,37 +45,12 @@ jobs:
   build:
     needs: check
     outputs:
-      linux-x64-sha: ${{ steps.sha.outputs.linux-x64-sha256 }}
-      linux-arm64-sha: ${{ steps.sha.outputs.linux-arm64-sha256 }}
-      linux-arm-sha: ${{ steps.sha.outputs.linux-arm-sha256 }}
       win-x64-sha: ${{ steps.sha.outputs.win-x64-sha256 }}
       win-arm64-sha: ${{ steps.sha.outputs.win-arm64-sha256 }}
-      osx-x64-sha: ${{ steps.sha.outputs.osx-x64-sha256 }}
-      osx-arm64-sha: ${{ steps.sha.outputs.osx-arm64-sha256 }}
     strategy:
       matrix:
-        runtime: [ linux-x64, linux-arm64, linux-arm, win-x64, osx-x64, osx-arm64, win-arm64 ]
+        runtime: [ win-x64, win-arm64 ]
         include:
-        - runtime: linux-x64
-          os: ubuntu-latest
-          devScript: ./dev.sh
-
-        - runtime: linux-arm64
-          os: ubuntu-latest
-          devScript: ./dev.sh
-
-        - runtime: linux-arm
-          os: ubuntu-latest
-          devScript: ./dev.sh
-
-        - runtime: osx-x64
-          os: macOS-latest
-          devScript: ./dev.sh
-
-        - runtime: osx-arm64
-          os: macOS-latest
-          devScript: ./dev.sh
-
         - runtime: win-x64
           os: windows-latest
           devScript: ./dev
@@ -100,20 +75,6 @@ jobs:
       run: |
         ${{ matrix.devScript }} package Release ${{ matrix.runtime }}
       working-directory: src
-
-    # compute shas and set as job outputs to use in release notes
-    - run: brew install coreutils #needed for shasum util
-      if: ${{ matrix.os == 'macOS-latest' }}
-      name: Install Dependencies for SHA Calculation (osx)
-    - run: |
-        file=$(ls)
-        sha=$(sha256sum $file | awk '{ print $1 }')
-        echo "Computed sha256: $sha for $file"
-        echo "${{matrix.runtime}}-sha256=$sha" >> $GITHUB_OUTPUT
-      shell: bash
-      id: sha
-      name: Compute SHA256
-      working-directory: _package
 
     # Upload runner package tar.gz/zip as artifact.
     - name: Publish Artifact
@@ -142,31 +103,6 @@ jobs:
       with:
         name: runner-packages-win-arm64
         path: ./
-    - name: Download Artifact (osx-x64)
-      uses: actions/download-artifact@v6
-      with:
-        name: runner-packages-osx-x64
-        path: ./
-    - name: Download Artifact (osx-arm64)
-      uses: actions/download-artifact@v6
-      with:
-        name: runner-packages-osx-arm64
-        path: ./
-    - name: Download Artifact (linux-x64)
-      uses: actions/download-artifact@v6
-      with:
-        name: runner-packages-linux-x64
-        path: ./
-    - name: Download Artifact (linux-arm)
-      uses: actions/download-artifact@v6
-      with:
-        name: runner-packages-linux-arm
-        path: ./
-    - name: Download Artifact (linux-arm64)
-      uses: actions/download-artifact@v6
-      with:
-        name: runner-packages-linux-arm64
-        path: ./
 
     # Create ReleaseNote file
     - name: Create ReleaseNote
@@ -180,11 +116,6 @@ jobs:
           var releaseNote = fs.readFileSync('${{ github.workspace }}/releaseNote.md', 'utf8').replace(/<RUNNER_VERSION>/g, runnerVersion)
           releaseNote = releaseNote.replace(/<WIN_X64_SHA>/g, '${{needs.build.outputs.win-x64-sha}}')
           releaseNote = releaseNote.replace(/<WIN_ARM64_SHA>/g, '${{needs.build.outputs.win-arm64-sha}}')
-          releaseNote = releaseNote.replace(/<OSX_X64_SHA>/g, '${{needs.build.outputs.osx-x64-sha}}')
-          releaseNote = releaseNote.replace(/<OSX_ARM64_SHA>/g, '${{needs.build.outputs.osx-arm64-sha}}')
-          releaseNote = releaseNote.replace(/<LINUX_X64_SHA>/g, '${{needs.build.outputs.linux-x64-sha}}')
-          releaseNote = releaseNote.replace(/<LINUX_ARM_SHA>/g, '${{needs.build.outputs.linux-arm-sha}}')
-          releaseNote = releaseNote.replace(/<LINUX_ARM64_SHA>/g, '${{needs.build.outputs.linux-arm64-sha}}')
           console.log(releaseNote)
           core.setOutput('version', runnerVersion);
           core.setOutput('note', releaseNote);
@@ -194,11 +125,6 @@ jobs:
         ls -l
         echo "${{needs.build.outputs.win-x64-sha}}  actions-runner-win-x64-${{ steps.releaseNote.outputs.version }}.zip" | shasum -a 256 -c
         echo "${{needs.build.outputs.win-arm64-sha}}  actions-runner-win-arm64-${{ steps.releaseNote.outputs.version }}.zip" | shasum -a 256 -c
-        echo "${{needs.build.outputs.osx-x64-sha}}  actions-runner-osx-x64-${{ steps.releaseNote.outputs.version }}.tar.gz" | shasum -a 256 -c
-        echo "${{needs.build.outputs.osx-arm64-sha}}  actions-runner-osx-arm64-${{ steps.releaseNote.outputs.version }}.tar.gz" | shasum -a 256 -c
-        echo "${{needs.build.outputs.linux-x64-sha}}  actions-runner-linux-x64-${{ steps.releaseNote.outputs.version }}.tar.gz" | shasum -a 256 -c
-        echo "${{needs.build.outputs.linux-arm-sha}}  actions-runner-linux-arm-${{ steps.releaseNote.outputs.version }}.tar.gz" | shasum -a 256 -c
-        echo "${{needs.build.outputs.linux-arm64-sha}}  actions-runner-linux-arm64-${{ steps.releaseNote.outputs.version }}.tar.gz" | shasum -a 256 -c
 
     # Create GitHub release
     - uses: actions/create-release@master
@@ -233,59 +159,9 @@ jobs:
         asset_name: actions-runner-win-arm64-${{ steps.releaseNote.outputs.version }}.zip
         asset_content_type: application/octet-stream
 
-    - name: Upload Release Asset (linux-x64)
-      uses: actions/upload-release-asset@v1.0.2
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      with:
-        upload_url: ${{ steps.createRelease.outputs.upload_url }}
-        asset_path: ${{ github.workspace }}/actions-runner-linux-x64-${{ steps.releaseNote.outputs.version }}.tar.gz
-        asset_name: actions-runner-linux-x64-${{ steps.releaseNote.outputs.version }}.tar.gz
-        asset_content_type: application/octet-stream
-
-    - name: Upload Release Asset (osx-x64)
-      uses: actions/upload-release-asset@v1.0.2
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      with:
-        upload_url: ${{ steps.createRelease.outputs.upload_url }}
-        asset_path: ${{ github.workspace }}/actions-runner-osx-x64-${{ steps.releaseNote.outputs.version }}.tar.gz
-        asset_name: actions-runner-osx-x64-${{ steps.releaseNote.outputs.version }}.tar.gz
-        asset_content_type: application/octet-stream
-
-    - name: Upload Release Asset (osx-arm64)
-      uses: actions/upload-release-asset@v1.0.2
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      with:
-        upload_url: ${{ steps.createRelease.outputs.upload_url }}
-        asset_path: ${{ github.workspace }}/actions-runner-osx-arm64-${{ steps.releaseNote.outputs.version }}.tar.gz
-        asset_name: actions-runner-osx-arm64-${{ steps.releaseNote.outputs.version }}.tar.gz
-        asset_content_type: application/octet-stream
-
-    - name: Upload Release Asset (linux-arm)
-      uses: actions/upload-release-asset@v1.0.2
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      with:
-        upload_url: ${{ steps.createRelease.outputs.upload_url }}
-        asset_path: ${{ github.workspace }}/actions-runner-linux-arm-${{ steps.releaseNote.outputs.version }}.tar.gz
-        asset_name: actions-runner-linux-arm-${{ steps.releaseNote.outputs.version }}.tar.gz
-        asset_content_type: application/octet-stream
-
-    - name: Upload Release Asset (linux-arm64)
-      uses: actions/upload-release-asset@v1.0.2
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      with:
-        upload_url: ${{ steps.createRelease.outputs.upload_url }}
-        asset_path: ${{ github.workspace }}/actions-runner-linux-arm64-${{ steps.releaseNote.outputs.version }}.tar.gz
-        asset_name: actions-runner-linux-arm64-${{ steps.releaseNote.outputs.version }}.tar.gz
-        asset_content_type: application/octet-stream
-
   publish-image:
     needs: release
-    runs-on: ubuntu-latest
+    runs-on: windows-latest
     permissions:
       contents: read
       packages: write
@@ -324,8 +200,8 @@ jobs:
         with:
           context: ./images
           platforms: |
-            linux/amd64
-            linux/arm64
+            windows/amd64
+            windows/arm64
           tags: |
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.image.outputs.version }}
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
