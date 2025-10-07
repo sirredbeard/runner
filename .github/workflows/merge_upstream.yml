@@ -1,0 +1,127 @@
+name: Merge upstream actions/runner into fork (keep one-commit-ahead)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write   # required to push commits
+  issues: write     # required to create an issue when automatic merge fails
+
+concurrency:
+  group: merge-upstream-${{ github.repository }}
+  cancel-in-progress: false
+
+env:
+  UPSTREAM_REPO: actions/runner
+  UPSTREAM_BRANCH: main
+  WORK_BRANCH: main
+  COMMIT_GREP: Add Windows Containers Support
+
+jobs:
+  merge:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository (full history)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Configure git user
+        run: |
+          git config user.name "sirredbeard"
+          git config user.email "hbarnes@herodevs.com"
+
+      - name: Add upstream remote and fetch
+        run: |
+          git remote add upstream https://github.com/${{ env.UPSTREAM_REPO }}.git || true
+          git fetch upstream ${{ env.UPSTREAM_BRANCH }}
+
+      - name: Save current HEAD (original fork state)
+        id: save
+        run: echo "old_head=$(git rev-parse HEAD)" >> $GITHUB_OUTPUT
+
+      - name: Find the 'Add Windows Containers Support' commit in history
+        id: find
+        run: |
+          # Find commit hash by commit message (first match)
+          commit=$(git log --pretty=format:%H --grep="${{ env.COMMIT_GREP }}" -n 1 || true)
+          if [ -z "$commit" ]; then
+            echo "No commit found matching '${{ env.COMMIT_GREP }}' in local history."
+            # Fail early so we can create an issue in the next step
+            echo "commit_found=false" >> $GITHUB_OUTPUT
+          else
+            echo "commit=$commit" >> $GITHUB_OUTPUT
+            echo "commit_found=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Abort if special commit not found (create issue)
+        if: steps.find.outputs.commit_found == 'false'
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            await github.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: "Automated merge aborted: patch commit not found",
+              body: `The workflow could not find a commit with message matching "${{ env.COMMIT_GREP }}" in the repository history. Please verify the commit message and rerun the workflow manually.`
+            })
+        # stop the job after issue is created
+      - name: Reset to upstream/main and cherry-pick patch
+        id: merge
+        shell: bash
+        run: |
+          set -euo pipefail
+          commit="${{ steps.find.outputs.commit }}"
+          old_head="${{ steps.save.outputs.old_head }}"
+
+          # Ensure we're on the working branch
+          git checkout ${{ env.WORK_BRANCH }}
+
+          # Reset the working branch to upstream main
+          git fetch upstream
+          git reset --hard upstream/${{ env.UPSTREAM_BRANCH }}
+
+          # Try to cherry-pick the special commit onto the new base
+          if git cherry-pick "$commit"; then
+            echo "result=success" >> $GITHUB_OUTPUT
+            # Push the updated branch (force-with-lease to be safer)
+            git push origin ${{ env.WORK_BRANCH }} --force-with-lease
+          else
+            echo "Cherry-pick failed; creating manual-merge branch and pushing it."
+
+            # abort cherry-pick and create a branch from the original HEAD for manual fix
+            git cherry-pick --abort || true
+
+            short=${old_head:0:7}
+            manual_branch="manual-merge-${short}"
+            git branch "$manual_branch" "$old_head"
+
+            # Push the manual branch for maintainers to inspect and resolve
+            git push origin "$manual_branch"
+
+            echo "result=failed" >> $GITHUB_OUTPUT
+            echo "manual_branch=$manual_branch" >> $GITHUB_OUTPUT
+
+            # do not exit with non-zero here so the next step can create an issue with details
+          fi
+
+      - name: Create issue on failure with manual-merge branch info
+        if: steps.merge.outputs.result == 'failed'
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const branch = '${{ steps.merge.outputs.manual_branch }}';
+            const commit = '${{ steps.find.outputs.commit }}';
+            await github.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `Automated merge failed — manual resolution required (${branch})`,
+              body: `The workflow attempted to rebase the fork onto \`${{ env.UPSTREAM_REPO }}/${{ env.UPSTREAM_BRANCH }}\` and cherry-pick the patch commit \`${commit}\` ("${{ env.COMMIT_GREP }}"). The cherry-pick failed (likely due to merge conflicts). A branch \`${branch}\` pointing at the original fork state has been pushed for manual resolution.\n\nPlease check the branch, resolve conflicts, and merge as appropriate.`
+            })
+
+      - name: Success notification (optional)
+        if: steps.merge.outputs.result == 'success'
+        run: echo "Upstream merged and patch commit reapplied successfully."
