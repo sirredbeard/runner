@@ -90,7 +90,7 @@ jobs:
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
-            await github.issues.create({
+            await github.rest.issues.create({
               owner: context.repo.owner,
               repo: context.repo.repo,
               title: "Automated merge aborted: patch commit not found",
@@ -150,7 +150,7 @@ jobs:
           script: |
             const branch = '${{ steps.merge.outputs.manual_branch }}';
             const commit = '${{ steps.find.outputs.commit }}';
-            await github.issues.create({
+            await github.rest.issues.create({
               owner: context.repo.owner,
               repo: context.repo.repo,
               title: `Automated merge failed — manual resolution required (${branch})`,
