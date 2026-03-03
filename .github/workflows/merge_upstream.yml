@@ -111,7 +111,7 @@ jobs:
           git checkout ${{ env.WORK_BRANCH }} || exit 1
 
           # Reset the working branch to the upstream release tag
-          git fetch upstream --tags || exit 1
+          git fetch upstream --tags || true
           git reset --hard "$new_tag" || exit 1
 
           # Try to cherry-pick the special commit onto the new base
