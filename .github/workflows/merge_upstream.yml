@@ -44,7 +44,7 @@ jobs:
         id: check_upstream
         run: |
           # Get the latest upstream release tag
-          latest_upstream_tag=$(git tag -l --sort=-version:refname "v*" | grep -E "^v[0-9]+\.[0-9]+\.[0-9]+$" | head -n 1)
+          latest_upstream_tag=$(git tag -l --sort=-version:refname "v*" | grep -E "^v[0-9]+\.[0-9]+\.[0-9]+$" | head -n 1 || true)
           
           # Get our current version from releaseVersion
           current_version=$(cat releaseVersion)
@@ -53,7 +53,10 @@ jobs:
           echo "Current version: $current_tag"
           echo "Latest upstream tag: $latest_upstream_tag"
           
-          if [ "$current_tag" = "$latest_upstream_tag" ]; then
+          if [ -z "$latest_upstream_tag" ]; then
+            echo "Could not find any upstream release tags matching pattern v[0-9]+.[0-9]+.[0-9]+"
+            echo "needs_update=false" >> $GITHUB_OUTPUT
+          elif [ "$current_tag" = "$latest_upstream_tag" ]; then
             echo "Already up to date with upstream release $latest_upstream_tag"
             echo "needs_update=false" >> $GITHUB_OUTPUT
           else
@@ -99,20 +102,20 @@ jobs:
         id: merge
         shell: bash
         run: |
-          set -euo pipefail
+          set -uo pipefail
           commit="${{ steps.find.outputs.commit }}"
           old_head="${{ steps.save.outputs.old_head }}"
           new_tag="${{ steps.check_upstream.outputs.new_tag }}"
 
           # Ensure we're on the working branch
-          git checkout ${{ env.WORK_BRANCH }}
+          git checkout ${{ env.WORK_BRANCH }} || exit 1
 
           # Reset the working branch to the upstream release tag
-          git fetch upstream --tags
-          git reset --hard "$new_tag"
+          git fetch upstream --tags || exit 1
+          git reset --hard "$new_tag" || exit 1
 
           # Try to cherry-pick the special commit onto the new base
-          if git cherry-pick "$commit"; then
+          if git cherry-pick "$commit" 2>/dev/null; then
             echo "result=success" >> $GITHUB_OUTPUT
             
             # Update releaseVersion to match upstream version (strip 'v' prefix)
@@ -125,22 +128,18 @@ jobs:
             # This will trigger release.yml via the releaseVersion push trigger
             git push origin ${{ env.WORK_BRANCH }} --force-with-lease
           else
-            echo "Cherry-pick failed; creating manual-merge branch and pushing it."
-
-            # abort cherry-pick and create a branch from the original HEAD for manual fix
-            git cherry-pick --abort || true
+            # Cherry-pick failed, create manual-merge branch
+            git cherry-pick --abort 2>/dev/null || true
 
             short=${old_head:0:7}
             manual_branch="manual-merge-${short}"
-            git branch "$manual_branch" "$old_head"
+            git branch "$manual_branch" "$old_head" || exit 1
 
             # Push the manual branch for maintainers to inspect and resolve
-            git push origin "$manual_branch"
+            git push origin "$manual_branch" || exit 1
 
             echo "result=failed" >> $GITHUB_OUTPUT
             echo "manual_branch=$manual_branch" >> $GITHUB_OUTPUT
-
-            # do not exit with non-zero here so the next step can create an issue with details
           fi
 
       - name: Create issue on failure with manual-merge branch info
