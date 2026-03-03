@@ -38,7 +38,7 @@ jobs:
       - name: Add upstream remote and fetch
         run: |
           git remote add upstream https://github.com/${{ env.UPSTREAM_REPO }}.git || true
-          git fetch upstream ${{ env.UPSTREAM_BRANCH }} --tags
+          git fetch upstream ${{ env.UPSTREAM_BRANCH }} --tags || true
 
       - name: Check for new upstream release tag
         id: check_upstream
