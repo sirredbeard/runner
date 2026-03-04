@@ -1,0 +1,75 @@
+name: Testing
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test-runner:
+    runs-on: windows-2025
+    steps:
+      - name: Get latest release version
+        id: latest-release
+        shell: powershell
+        run: |
+          $release = gh release list --repo ${{ github.repository }} --limit 1 --json tagName --jq '.[0].tagName'
+          Write-Output "version=$release" >> $env:GITHUB_OUTPUT
+          Write-Host "Latest release: $release"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Download latest x64 release
+        shell: powershell
+        run: |
+          $version = "${{ steps.latest-release.outputs.version }}"
+          Write-Host "Downloading runner for version: $version"
+          gh release download $version `
+            --repo ${{ github.repository }} `
+            --pattern "actions-runner-win-x64-*.zip" `
+            --dir runner-release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract runner
+        shell: powershell
+        run: |
+          $zipFile = Get-ChildItem runner-release/*.zip | Select-Object -First 1
+          Write-Host "Extracting: $($zipFile.FullName)"
+          Expand-Archive -Path $zipFile.FullName -DestinationPath runner -Force
+          Get-ChildItem runner -Recurse -Include "*.exe" | ForEach-Object { Write-Host "Found: $($_.Name)" }
+
+      - name: Verify runner binaries
+        shell: powershell
+        run: |
+          Write-Host "Checking for key runner executables..."
+          $expectedExes = @(
+            "Runner.Listener.exe",
+            "Runner.Worker.exe",
+            "Runner.PluginHost.exe",
+            "RunnerService.exe"
+          )
+          
+          foreach ($exe in $expectedExes) {
+            $path = Join-Path "runner\bin" $exe
+            if (Test-Path $path) {
+              $fileInfo = Get-Item $path
+              Write-Host "✓ Found $exe ($('{0:N0}' -f $fileInfo.Length) bytes)"
+            } else {
+              Write-Host "✗ Missing $exe"
+              exit 1
+            }
+          }
+
+      - name: Test runner version output
+        shell: powershell
+        run: |
+          Write-Host "Testing Runner.Listener version..."
+          $versionOutput = & "runner\bin\Runner.Listener.exe" --version 2>&1
+          Write-Host "Version output:`n$versionOutput"
+          
+          # Verify Windows Container support indicator is present
+          if ($versionOutput -match "Windows Container Support") {
+            Write-Host "✓ Windows Container support indicator present in version output"
+          } else {
+            Write-Host "✗ Windows Container support indicator missing from version output"
+            exit 1
+          }
