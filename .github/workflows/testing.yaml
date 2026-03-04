@@ -2,38 +2,37 @@ name: Testing
 
 on:
   workflow_dispatch:
+  workflow_run:
+    workflows: ["Runner CI"]
+    types: [completed]
+    branches: [main, new_*, releases/*]
 
 jobs:
   test-runner:
     runs-on: windows-2025
     steps:
-      - name: Get latest release version
-        id: latest-release
-        shell: powershell
-        run: |
-          $release = gh release list --repo ${{ github.repository }} --limit 1 --json tagName --jq '.[0].tagName'
-          Write-Output "version=$release" >> $env:GITHUB_OUTPUT
-          Write-Host "Latest release: $release"
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Download CI artifacts
+        uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: ${{ github.event.workflow_run.id }}
+          path: ci-artifacts
 
-      - name: Download latest x64 release
+      - name: Extract x64 runner package
         shell: powershell
         run: |
-          $version = "${{ steps.latest-release.outputs.version }}"
-          Write-Host "Downloading runner for version: $version"
-          gh release download $version `
-            --repo ${{ github.repository }} `
-            --pattern "actions-runner-win-x64-*.zip" `
-            --dir runner-release
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Extract runner
-        shell: powershell
-        run: |
-          $zipFile = Get-ChildItem runner-release/*.zip | Select-Object -First 1
-          Write-Host "Extracting: $($zipFile.FullName)"
+          Write-Host "Looking for runner package in artifacts..."
+          $packages = Get-ChildItem -Path "ci-artifacts" -Filter "actions-runner-win-x64-*.zip" -Recurse
+          
+          if ($packages.Count -eq 0) {
+            Write-Host "✗ No x64 runner package found in artifacts"
+            Get-ChildItem -Path "ci-artifacts" -Recurse | Select-Object -ExpandProperty FullName
+            exit 1
+          }
+          
+          $zipFile = $packages[0]
+          Write-Host "Found package: $($zipFile.FullName)"
+          
           Expand-Archive -Path $zipFile.FullName -DestinationPath runner -Force
           Get-ChildItem runner -Recurse -Include "*.exe" | ForEach-Object { Write-Host "Found: $($_.Name)" }
 
