@@ -68,7 +68,8 @@ namespace GitHub.Runner.Listener
                 _terminal.WriteLine("Runner update in progress, do not shutdown runner.");
                 _terminal.WriteLine($"Downloading {updateMessage.TargetVersion} runner");
 
-                // Redirect updates from upstream actions/runner to sirredbeard/runner fork
+#if !DEBUG
+                // Redirect updates from upstream actions/runner to sirredbeard/runner fork (RELEASE builds only)
                 string downloadUrl = updateMessage.DownloadUrl;
                 string sha256Checksum = updateMessage.SHA256Checksum;
                 if (!string.IsNullOrEmpty(downloadUrl) && downloadUrl.Contains("actions/runner"))
@@ -78,6 +79,10 @@ namespace GitHub.Runner.Listener
                     _terminal.WriteLine($"Redirecting update to fork: {downloadUrl}");
                     Trace.Info($"Redirected download URL from upstream to fork");
                 }
+#else
+                string downloadUrl = updateMessage.DownloadUrl;
+                string sha256Checksum = updateMessage.SHA256Checksum;
+#endif
 
                 await DownloadLatestRunner(token, updateMessage.TargetVersion, downloadUrl, sha256Checksum, updateMessage.OS);
                 Trace.Info($"Download latest runner and unzip into runner root.");

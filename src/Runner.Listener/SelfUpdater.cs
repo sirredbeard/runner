@@ -186,7 +186,8 @@ namespace GitHub.Runner.Listener
             var packageDownloadUrl = _targetPackage.DownloadUrl;
             var packageHashValue = _targetPackage.HashValue;
 
-            // Redirect updates from upstream actions/runner to sirredbeard/runner fork
+#if !DEBUG
+            // Redirect updates from upstream actions/runner to sirredbeard/runner fork (RELEASE builds only)
             if (!string.IsNullOrEmpty(packageDownloadUrl) && packageDownloadUrl.Contains("actions/runner"))
             {
                 packageDownloadUrl = RedirectToForkRelease(targetVersion, _targetPackage.Platform, token);
@@ -194,6 +195,7 @@ namespace GitHub.Runner.Listener
                 await UpdateRunnerUpdateStateAsync($"Redirecting update to fork: {packageDownloadUrl}");
                 Trace.Info($"Redirected download URL from upstream to fork");
             }
+#endif
 
             _updateTrace.Enqueue($"DownloadUrl: {packageDownloadUrl}");
 
