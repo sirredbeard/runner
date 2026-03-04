@@ -26,7 +26,10 @@ All modifications are consolidated into a single commit for maintainability:
 
 - **src/Runner.Worker/ContainerOperationProvider.cs**: Removes Windows Server edition checks
 - **src/Runner.Worker/Container/DockerCommandManager.cs**: Adjusts Docker command handling for Windows Containers
-- **src/Runner.Service/Windows/RunnerService.csproj**: Updates .NET Framework target to 4.8 for ARM64 compatibility
+- **src/Runner.Service/Windows/RunnerService.csproj**: Updates .NET Framework target from 4.7 to 4.8 for ARM64 compatibility
+- **src/Runner.Listener/Runner.cs**: Version output displays simple version number
+- **src/Runner.Listener/SelfUpdater.cs**: Auto-update redirection to fork releases with SHA256 validation
+- **src/Runner.Listener/SelfUpdaterV2.cs**: Auto-update redirection to fork releases with SHA256 validation
 
 ## Get Started
 
@@ -56,6 +59,33 @@ Windows Container images are available at GitHub Container Registry:
 * `ghcr.io/sirredbeard/actions-runner:2.331.0-arm64`
 
 Images are based on Windows Server Core (ltsc2025).
+
+## Version and Auto-Update
+
+### Version Output
+
+Running `./config.cmd --version` displays the runner version number (e.g., `2.332.0`). This version output is compatible with upstream patterns.
+
+### Automatic Updates
+
+The runner automatically checks for updates when idle. **Important:** This fork is configured to automatically redirect updates from upstream **actions/runner** to the **sirredbeard/runner** fork:
+
+- When GitHub's backend sends an update message with an upstream actions/runner URL, the runner intercepts it
+- The URL is automatically redirected to the corresponding fork release
+- Fork releases are validated using SHA256 checksums before installation
+- The redirect only occurs in production RELEASE builds; DEBUG builds use original upstream URLs
+
+**Update URL Pattern:**
+```
+From: https://github.com/actions/runner/releases/download/v{version}/actions-runner-win-{arch}-{version}.zip
+To:   https://github.com/sirredbeard/runner/releases/download/v{version}/actions-runner-win-{arch}-{version}.zip
+```
+
+This means:
+- ✅ Runners configured with this fork automatically update from the fork
+- ✅ No additional configuration needed - updates work transparently
+- ✅ All fork releases are validated with SHA256 before installation
+- ✓ Version tracking stays in sync with upstream releases
 
 ## Usage
 

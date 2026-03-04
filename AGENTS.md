@@ -132,6 +132,59 @@ A complete package includes:
 **externals/ directory (4 files):**
 - Node.js v20.20.0 and v24.13.0 (exe + lib for each)
 
+## Auto-Update Redirect Mechanism
+
+### How It Works
+
+When a runner receives an update message from GitHub's backend, it checks the download URL:
+
+1. **Detection:** Message contains URL from `actions/runner` releases
+2. **Redirection:** URL is rewritten to point to `sirredbeard/runner` fork release with same version
+3. **Validation:** Fork release SHA256 is fetched and validated before installation
+4. **Transparent:** User sees no difference; update process is identical
+
+### URL Transform Example
+
+```
+Upstream URL: https://github.com/actions/runner/releases/download/v2.332.0/actions-runner-win-x64-2.332.0.zip
+              ↓
+Fork URL:     https://github.com/sirredbeard/runner/releases/download/v2.332.0/actions-runner-win-x64-2.332.0.zip
+```
+
+### Implementation Details
+
+- **SelfUpdater.cs** (legacy update flow):
+  - Line 179-200: Intercepts `DownloadLatestRunner()` URL in `DownloadUrl` property
+  - Lines 655-710: Provides `RedirectToForkRelease()` and `GetForkReleaseSHA256()` helpers
+  - Uses `#if !DEBUG` guard to skip redirect in test builds
+
+- **SelfUpdaterV2.cs** (modern update flow):
+  - Line 57-85: Intercepts update in `SelfUpdate()` method before `DownloadLatestRunner()` call
+  - Lines 580-630: Same redirect helper methods as SelfUpdater
+  - Uses `#if !DEBUG` guard to skip redirect in test builds
+
+- **Version Detection:** 
+  - Extracts version from `AgentRefreshMessage.TargetVersion`
+  - Detects architecture from `updateMessage.OS` or `_targetPackage.Platform`
+  - Constructs fork URL: `https://github.com/sirredbeard/runner/releases/download/v{version}/actions-runner-win-{arch}-{version}.zip`
+
+- **SHA256 Validation:**
+  - Fetches `actions-runner-win-{arch}-{version}.zip.sha256` from fork releases
+  - Parses SHA256 from file content
+  - Validates downloaded package matches before installation
+
+### Why `#if !DEBUG`?
+
+The redirect logic is only active in RELEASE production builds:
+
+- **DEBUG builds** (tests): Use original upstream URLs to verify test infrastructure
+- **RELEASE builds** (production): Redirect to fork releases for automatic updates
+
+This ensures:
+- ✅ Unit tests work without mocking external URLs
+- ✅ Production runners automatically update to fork releases
+- ✅ Both update flows (legacy SelfUpdater and modern SelfUpdaterV2) behave identically
+
 ## Code Modifications
 
 The single commit modifies these files for Windows Container support:
@@ -146,7 +199,22 @@ The single commit modifies these files for Windows Container support:
 3. **src/Runner.Service/Windows/RunnerService.csproj**
    - Updates .NET Framework target from 4.7 to 4.8 for ARM64 compatibility
 
-4. **Workflow files:**
+4. **src/Runner.Listener/Runner.cs**
+   - Version output displays simple version number compatible with upstream patterns
+
+5. **src/Runner.Listener/SelfUpdater.cs**
+   - Intercepts update URLs from GitHub's backend messages
+   - Redirects `actions/runner` URLs to `sirredbeard/runner` fork releases
+   - Validates fork releases using SHA256 checksums before installation
+   - Redirect logic only active in RELEASE builds (wrapped in `#if !DEBUG`)
+   - Backward compatible with upstream runner behavior
+
+6. **src/Runner.Listener/SelfUpdaterV2.cs**
+   - Same redirect and validation logic as SelfUpdater for newer update message flows
+   - Intercepts PackageMetadata messages and applies fork URL redirection
+   - Validates SHA256 before downloading and extracting updated runner
+
+7. **Workflow files:**
    - Deleted: Most upstream workflow files (CodeQL, dependency checks, bots, etc.)
    - Modified: build.yml (Windows-only), release.yml (Windows binaries + Docker), docker-publish.yml
    - Added: merge_upstream.yml (daily sync automation)
@@ -274,6 +342,13 @@ git push origin main --force-with-lease
 5. **Sync on releases:** Don't sync on every upstream commit, only tagged releases
 
 ## Version History
+
+- **v2.332.0** - Auto-update redirection configuration
+  - Implements fork auto-update redirection for transparent update flow
+  - Adds SHA256 validation for fork releases before installation
+  - Redirect logic guarded for production RELEASE builds only
+  - Both SelfUpdater and SelfUpdaterV2 update flows redirected
+  - All L0 tests passing (proxy, update behavior, etc.)
 
 - **v2.331.0** - Complete automation with Windows Container Docker images
   - Switched Docker base from nanoserver to Windows Server Core (ltsc2025)
