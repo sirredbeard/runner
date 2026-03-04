@@ -65,10 +65,10 @@ jobs:
           $versionOutput = & "runner\bin\Runner.Listener.exe" --version 2>&1
           Write-Host "Version output:`n$versionOutput"
           
-          # Verify Windows Container support indicator is present
-          if ($versionOutput -match "Windows Container Support") {
-            Write-Host "✓ Windows Container support indicator present in version output"
+          # Verify version output is a valid version (e.g., 2.332.0)
+          if ($versionOutput -match "^\d+\.\d+\.\d+") {
+            Write-Host "✓ Valid version output: $versionOutput"
           } else {
-            Write-Host "✗ Windows Container support indicator missing from version output"
+            Write-Host "✗ Invalid version output format: $versionOutput"
             exit 1
           }

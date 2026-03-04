@@ -98,7 +98,6 @@ namespace GitHub.Runner.Listener
                 if (command.Version)
                 {
                     _term.WriteLine(BuildConstants.RunnerPackage.Version);
-                    _term.WriteLine("Fork by sirredbeard with Windows Container Support");
                     return Constants.Runner.ReturnCode.Success;
                 }
 
