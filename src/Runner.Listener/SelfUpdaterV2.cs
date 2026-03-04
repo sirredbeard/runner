@@ -599,7 +599,7 @@ namespace GitHub.Runner.Listener
                 string arch = platform.ToLowerInvariant().Contains("arm64") ? "arm64" : "x64";
                 string sha256Url = $"https://github.com/sirredbeard/runner/releases/download/v{version}/actions-runner-win-{arch}-{version}.zip.sha256";
                 
-                using (var httpClient = new HttpClient())
+                using (var httpClient = new HttpClient(HostContext.CreateHttpClientHandler()))
                 {
                     httpClient.Timeout = TimeSpan.FromSeconds(30);
                     var response = await httpClient.GetAsync(sha256Url, token);
