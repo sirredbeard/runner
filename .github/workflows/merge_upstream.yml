@@ -1,0 +1,253 @@
+name: Merge upstream actions/runner commits into sirredbeard/runner (keep one commit ahead)
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Check daily so fork packages keep pace with runner version enforcement.
+    - cron: '0 2 * * *'
+
+permissions:
+  contents: write   # required to push commits
+  actions: write   # explicitly dispatch CD after a GITHUB_TOKEN push
+  issues: write     # required to create an issue when automatic merge fails
+
+concurrency:
+  group: merge-upstream-${{ github.repository }}
+  cancel-in-progress: false
+
+env:
+  UPSTREAM_REPO: actions/runner
+  WORK_BRANCH: main
+  COMMIT_GREP: Add Windows Containers Support
+
+jobs:
+  merge:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository (full history)
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Configure git user
+        run: |
+          git config user.name "sirredbeard"
+          git config user.email "hbarnes@herodevs.com"
+
+      - name: Resolve the latest published upstream release
+        id: check_upstream
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          latest_upstream_tag=$(gh api "repos/${UPSTREAM_REPO}/releases/latest" --jq .tag_name)
+          if ! [[ "$latest_upstream_tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Invalid upstream release tag: $latest_upstream_tag" >&2
+            exit 1
+          fi
+          git remote add upstream "https://github.com/${UPSTREAM_REPO}.git"
+          # Use a separate ref: fork release tags have the same names as upstream tags.
+          git fetch --no-tags upstream "+refs/tags/${latest_upstream_tag}:refs/remotes/upstream/release"
+          release_commit=$(git rev-parse 'refs/remotes/upstream/release^{commit}')
+          release_version=$(git show "${release_commit}:src/runnerversion" | tr -d '[:space:]')
+          if [[ "v${release_version}" != "$latest_upstream_tag" ]]; then
+            echo "Upstream tag and runner version disagree" >&2
+            exit 1
+          fi
+          current_version=$(tr -d '[:space:]' < releaseVersion)
+          if ! [[ "$current_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] ||
+            [[ "$current_version" != "$(tr -d '[:space:]' < src/runnerversion)" ]]; then
+            echo "Current releaseVersion must match src/runnerversion" >&2
+            exit 1
+          fi
+          echo "new_tag=$latest_upstream_tag" >> "$GITHUB_OUTPUT"
+          echo "release_commit=$release_commit" >> "$GITHUB_OUTPUT"
+          if [[ "$current_version" == "$release_version" ]]; then
+            echo "needs_update=false" >> "$GITHUB_OUTPUT"
+          elif [[ "$(printf '%s\n' "$current_version" "$release_version" | sort -V | tail -n 1)" == "$current_version" ]]; then
+            echo "Ignoring older upstream release $latest_upstream_tag; keeping $current_version"
+            echo "needs_update=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "needs_update=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Save current HEAD (original fork state)
+        id: save
+        run: echo "old_head=$(git rev-parse HEAD)" >> $GITHUB_OUTPUT
+
+      - name: Validate the single fork patch at HEAD
+        if: steps.check_upstream.outputs.needs_update == 'true'
+        id: find
+        run: |
+          commit=$(git rev-parse HEAD)
+          # Never search backward: that can silently discard changes merged after
+          # the original patch. Ordinary PR merges require maintainer normalization.
+          if [[ "$(git log -1 --format=%s)" == "$COMMIT_GREP" &&
+                "$(git rev-list --parents -n 1 HEAD | awk '{print NF}')" == "2" ]]; then
+            echo "commit=$commit" >> "$GITHUB_OUTPUT"
+            echo "commit_found=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "HEAD must be the single '$COMMIT_GREP' patch commit."
+            echo "commit_found=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Report invalid fork history and stop
+        if: steps.check_upstream.outputs.needs_update == 'true' && steps.find.outputs.commit_found == 'false'
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const title = 'Automated merge aborted: invalid fork patch history';
+            const issues = await github.paginate(github.rest.issues.listForRepo, {
+              ...context.repo, state: 'open', per_page: 100
+            });
+            if (!issues.some(issue => !issue.pull_request && issue.title === title)) {
+              await github.rest.issues.create({
+                ...context.repo, title,
+                body: 'HEAD must be the single "Add Windows Containers Support" patch atop an upstream release. Normalize the merged changes into that patch before rerunning sync. No reset or push was attempted.'
+              });
+            }
+            core.setFailed(title);
+
+      - name: Reset to the published release and cherry-pick patch
+        if: steps.check_upstream.outputs.needs_update == 'true' && steps.find.outputs.commit_found == 'true'
+        id: merge
+        shell: bash
+        run: |
+          set -euo pipefail
+          commit="${{ steps.find.outputs.commit }}"
+          old_head="${{ steps.save.outputs.old_head }}"
+
+          # Files where conflicts are expected and can be auto-resolved
+          # These are always overwritten by our fork and should never block a merge
+          AUTO_RESOLVE_OURS=(README.md images/Dockerfile AGENTS.md .github/workflows/release.yml .github/workflows/build.yml .github/workflows/docker-publish.yml releaseNote.md)
+
+          # Ensure we're on the working branch
+          git checkout ${{ env.WORK_BRANCH }} || exit 1
+
+          # Rebase the single fork patch onto the exact release commit selected above.
+          git reset --hard "${{ steps.check_upstream.outputs.release_commit }}" || exit 1
+
+          # Try to cherry-pick the special commit onto the new base
+          if git cherry-pick "$commit" 2>/dev/null; then
+            echo "Cherry-pick applied cleanly"
+            cherry_pick_ok=true
+          else
+            echo "Cherry-pick had conflicts, attempting auto-resolution..."
+
+            # Get list of conflicted files
+            conflicted_files=$(git diff --name-only --diff-filter=U)
+            echo "Conflicted files:"
+            echo "$conflicted_files"
+
+            # Separate auto-resolvable conflicts from real conflicts
+            has_real_conflicts=false
+            for f in $conflicted_files; do
+              is_auto=false
+              # Check if this file is in our auto-resolve list
+              for auto_file in "${AUTO_RESOLVE_OURS[@]}"; do
+                if [ "$f" = "$auto_file" ]; then
+                  is_auto=true
+                  break
+                fi
+              done
+
+              if [ "$f" = "releaseVersion" ]; then
+                # releaseVersion is always overwritten after cherry-pick via --amend; take upstream's for now
+                echo "Auto-resolving releaseVersion (will be squash-amended after cherry-pick)"
+                git checkout --ours "$f"
+                git add "$f"
+              elif [ "$is_auto" = "true" ]; then
+                # For fork-owned files, always take our cherry-picked version.
+                # Handle modify/delete conflicts: if the patch (theirs) deleted the
+                # file, there is no "their" version to check out, so remove it instead.
+                if git cat-file -e ":3:$f" 2>/dev/null; then
+                  echo "Auto-resolving $f (taking ours from patch)"
+                  git checkout --theirs "$f"
+                  git add "$f"
+                else
+                  echo "Auto-resolving $f (patch deletes it, removing)"
+                  git rm -f "$f"
+                fi
+              elif ! git cat-file -e ":3:$f" 2>/dev/null && git cat-file -e ":2:$f" 2>/dev/null; then
+                # Modify/delete conflict where the fork patch (theirs) deleted the file
+                # while upstream (ours) modified it. The fork intentionally removes these
+                # upstream files (e.g. workflows it does not carry), so honor the deletion.
+                # This also covers upstream-added files the fork has never carried.
+                echo "Auto-resolving $f (patch deletes upstream file, removing)"
+                git rm -f "$f"
+              else
+                echo "REAL CONFLICT in $f — cannot auto-resolve"
+                has_real_conflicts=true
+              fi
+            done
+
+            if [ "$has_real_conflicts" = "true" ]; then
+              echo "Unresolvable conflicts remain, aborting cherry-pick"
+              git cherry-pick --abort 2>/dev/null || true
+
+              short=${old_head:0:7}
+              manual_branch="manual-merge-${short}"
+              git branch "$manual_branch" "$old_head" 2>/dev/null || true
+              git push origin "$manual_branch" 2>/dev/null || true
+
+              echo "result=failed" >> $GITHUB_OUTPUT
+              echo "manual_branch=$manual_branch" >> $GITHUB_OUTPUT
+              cherry_pick_ok=false
+            else
+              echo "All conflicts auto-resolved, continuing cherry-pick"
+              git cherry-pick --continue --no-edit
+              cherry_pick_ok=true
+            fi
+          fi
+
+          if [ "$cherry_pick_ok" = "true" ]; then
+            # Keep the release trigger in the single fork patch commit.
+            upstream_version=$(cat src/runnerversion | tr -d '[:space:]')
+            printf '%s' "$upstream_version" > releaseVersion
+            git add releaseVersion
+            git commit --amend --no-edit
+
+            # Push the updated branch (force-with-lease to be safer)
+            # GITHUB_TOKEN pushes do not trigger push workflows; dispatch CD below.
+            git push origin ${{ env.WORK_BRANCH }} --force-with-lease
+            echo "result=success" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create issue on failure with manual-merge branch info
+        if: steps.check_upstream.outputs.needs_update == 'true' && steps.merge.outputs.result == 'failed'
+        uses: actions/github-script@v9
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const branch = '${{ steps.merge.outputs.manual_branch }}';
+            const commit = '${{ steps.find.outputs.commit }}';
+            const title = 'Automated merge failed — manual resolution required';
+            const issues = await github.paginate(github.rest.issues.listForRepo, {
+              ...context.repo, state: 'open', per_page: 100
+            });
+            if (!issues.some(issue => !issue.pull_request && issue.title === title)) {
+              await github.rest.issues.create({
+                ...context.repo, title,
+                body: `Could not apply fork patch ${commit} to the upstream release. Original state is preserved on ${branch}. Resolve the conflicts and rerun sync.`
+              });
+            }
+            core.setFailed(title);
+
+      - name: Publish a missing fork release
+        if: steps.check_upstream.outputs.needs_update == 'false' || steps.merge.outputs.result == 'success'
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const fs = require('fs');
+            const version = fs.readFileSync('releaseVersion', 'utf8').trim();
+            try {
+              await github.rest.repos.getReleaseByTag({ ...context.repo, tag: `v${version}` });
+              core.info(`Fork release v${version} already exists.`);
+            } catch (error) {
+              if (error.status !== 404) throw error;
+              await github.rest.actions.createWorkflowDispatch({
+                ...context.repo, workflow_id: 'release.yml', ref: process.env.WORK_BRANCH
+              });
+              core.info(`Dispatched Runner CD for missing release v${version}.`);
+            }
