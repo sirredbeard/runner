@@ -1,0 +1,74 @@
+name: Testing
+
+on:
+  workflow_dispatch:
+  workflow_run:
+    workflows: ["Runner CI"]
+    types: [completed]
+    branches: [main, new_*, releases/*]
+
+jobs:
+  test-runner:
+    runs-on: windows-2025
+    steps:
+      - name: Download CI artifacts
+        uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: ${{ github.event.workflow_run.id }}
+          path: ci-artifacts
+
+      - name: Extract x64 runner package
+        shell: powershell
+        run: |
+          Write-Host "Looking for runner package in artifacts..."
+          $packages = Get-ChildItem -Path "ci-artifacts" -Filter "actions-runner-win-x64-*.zip" -Recurse
+          
+          if ($packages.Count -eq 0) {
+            Write-Host "✗ No x64 runner package found in artifacts"
+            Get-ChildItem -Path "ci-artifacts" -Recurse | Select-Object -ExpandProperty FullName
+            exit 1
+          }
+          
+          $zipFile = $packages[0]
+          Write-Host "Found package: $($zipFile.FullName)"
+          
+          Expand-Archive -Path $zipFile.FullName -DestinationPath runner -Force
+          Get-ChildItem runner -Recurse -Include "*.exe" | ForEach-Object { Write-Host "Found: $($_.Name)" }
+
+      - name: Verify runner binaries
+        shell: powershell
+        run: |
+          Write-Host "Checking for key runner executables..."
+          $expectedExes = @(
+            "Runner.Listener.exe",
+            "Runner.Worker.exe",
+            "Runner.PluginHost.exe",
+            "RunnerService.exe"
+          )
+          
+          foreach ($exe in $expectedExes) {
+            $path = Join-Path "runner\bin" $exe
+            if (Test-Path $path) {
+              $fileInfo = Get-Item $path
+              Write-Host "✓ Found $exe ($('{0:N0}' -f $fileInfo.Length) bytes)"
+            } else {
+              Write-Host "✗ Missing $exe"
+              exit 1
+            }
+          }
+
+      - name: Test runner version output
+        shell: powershell
+        run: |
+          Write-Host "Testing Runner.Listener version..."
+          $versionOutput = & "runner\bin\Runner.Listener.exe" --version 2>&1
+          Write-Host "Version output:`n$versionOutput"
+          
+          # Verify version output is a valid version (e.g., 2.332.0)
+          if ($versionOutput -match "^\d+\.\d+\.\d+") {
+            Write-Host "✓ Valid version output: $versionOutput"
+          } else {
+            Write-Host "✗ Invalid version output format: $versionOutput"
+            exit 1
+          }
