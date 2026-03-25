@@ -186,6 +186,17 @@ namespace GitHub.Runner.Listener
             var packageDownloadUrl = _targetPackage.DownloadUrl;
             var packageHashValue = _targetPackage.HashValue;
 
+#if !DEBUG
+            // Redirect updates from upstream actions/runner to sirredbeard/runner fork (RELEASE builds only)
+            if (!string.IsNullOrEmpty(packageDownloadUrl) && packageDownloadUrl.Contains("actions/runner"))
+            {
+                packageDownloadUrl = RedirectToForkRelease(targetVersion, _targetPackage.Platform, token);
+                packageHashValue = await GetForkReleaseSHA256(targetVersion, _targetPackage.Platform, token);
+                await UpdateRunnerUpdateStateAsync($"Redirecting update to fork: {packageDownloadUrl}");
+                Trace.Info($"Redirected download URL from upstream to fork");
+            }
+#endif
+
             _updateTrace.Enqueue($"DownloadUrl: {packageDownloadUrl}");
 
             try
@@ -640,6 +651,54 @@ namespace GitHub.Runner.Listener
             {
                 Trace.Error(ex);
                 Trace.Info($"Catch exception during report update state, ignore this error and continue auto-update.");
+            }
+        }
+
+        private string RedirectToForkRelease(string version, string platform, CancellationToken token)
+        {
+            // Convert platform name to architecture
+            string arch = platform.ToLowerInvariant().Contains("arm64") ? "arm64" : "x64";
+            
+            // Construct fork release download URL for Windows
+            // Format: https://github.com/sirredbeard/runner/releases/download/v{version}/actions-runner-win-{arch}-{version}.zip
+            string releaseUrl = $"https://github.com/sirredbeard/runner/releases/download/v{version}/actions-runner-win-{arch}-{version}.zip";
+            
+            Trace.Info($"Redirecting runner update to fork release: {releaseUrl}");
+            return releaseUrl;
+        }
+
+        private async Task<string> GetForkReleaseSHA256(string version, string platform, CancellationToken token)
+        {
+            try
+            {
+                // Construct fork release SHA256 file URL
+                string arch = platform.ToLowerInvariant().Contains("arm64") ? "arm64" : "x64";
+                string sha256Url = $"https://github.com/sirredbeard/runner/releases/download/v{version}/actions-runner-win-{arch}-{version}.zip.sha256";
+                
+                using (var httpClient = new HttpClient(HostContext.CreateHttpClientHandler()))
+                {
+                    httpClient.Timeout = TimeSpan.FromSeconds(30);
+                    var response = await httpClient.GetAsync(sha256Url, token);
+                    
+                    if (response.IsSuccessStatusCode)
+                    {
+                        var content = await response.Content.ReadAsStringAsync();
+                        // SHA256 file format is typically: "sha256hash filename"
+                        var sha256 = content.Split(' ')[0].Trim();
+                        Trace.Info($"Retrieved fork release SHA256: {sha256}");
+                        return sha256;
+                    }
+                    else
+                    {
+                        Trace.Warning($"Failed to retrieve fork release SHA256 from {sha256Url}, status: {response.StatusCode}");
+                        return string.Empty;
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Trace.Warning($"Exception retrieving fork release SHA256: {ex.Message}");
+                return string.Empty;
             }
         }
     }

@@ -2,38 +2,75 @@
   <img src="docs/res/github-graph.png">
 </p>
 
-# GitHub Actions Runner
+# GitHub Actions Runner - Windows Container Fork
 
-[![Actions Status](https://github.com/actions/runner/workflows/Runner%20CI/badge.svg)](https://github.com/actions/runner/actions)
+[![Actions Status](https://github.com/sirredbeard/runner/workflows/Runner%20CI/badge.svg)](https://github.com/sirredbeard/runner/actions)
 
-The runner is the application that runs a job from a GitHub Actions workflow. It is used by GitHub Actions in the [hosted virtual environments](https://github.com/actions/virtual-environments), or you can [self-host the runner](https://help.github.com/en/actions/automating-your-workflow-with-github-actions/about-self-hosted-runners) in your own environment.
+This is a fork of [actions/runner](https://github.com/actions/runner) that runs jobs in Windows Containers on x64 and ARM64.
 
-## Get Started
+Upstream only supports container jobs on Linux runners, and its Windows code path additionally requires Windows Server. This fork removes both restrictions. It tracks upstream as a single commit ahead, so the delta is always one `git show` away.
 
-For more information about installing and using self-hosted runners, see [Adding self-hosted runners](https://help.github.com/en/actions/automating-your-workflow-with-github-actions/adding-self-hosted-runners) and [Using self-hosted runners in a workflow](https://help.github.com/en/actions/automating-your-workflow-with-github-actions/using-self-hosted-runners-in-a-workflow)
+## Differences from upstream
 
-Runner releases:
+* Container jobs run on any edition of Windows 1803 or later with Docker installed, not just Windows Server.
+* Containers can run under [Hyper-V isolation](https://learn.microsoft.com/en-us/virtualization/windowscontainers/manage-containers/hyperv-container) on Windows Pro and Enterprise with nested virtualization enabled.
+* Builds and releases are Windows-only: `win-x64` and `win-arm64`. The Linux and macOS build jobs and the Linux container image are removed.
+* Most upstream repository workflows (CodeQL, npm audit, stale bots, dotnet/node/buildx upgrade jobs) are removed and replaced with an upstream sync job, see [AGENTS.md](AGENTS.md).
 
-![win](docs/res/win_sm.png) [Pre-reqs](docs/start/envwin.md) | [Download](https://github.com/actions/runner/releases)  
+### Code changes
 
-![macOS](docs/res/apple_sm.png)  [Pre-reqs](docs/start/envosx.md) | [Download](https://github.com/actions/runner/releases)  
+* **src/Runner.Worker/ContainerOperationProvider.cs**: Removes the Windows Server registry check. Maps `/github/home` and `/github/workflow` to `C:\ghhome` and `C:\ghworkflow`, and uses `ping -t localhost` as the keepalive entrypoint in place of `tail -f /dev/null`.
+* **src/Runner.Worker/Container/DockerCommandManager.cs**: Allows container operations on Windows and creates missing bind mount source directories before `docker run`.
+* **src/Runner.Service/Windows/RunnerService.csproj**: Raises the non-ARM64 service target from .NET Framework 4.7 to 4.8. Upstream already targets 4.8 for `win-arm64`.
+* **src/Runner.Listener/SelfUpdater.cs** and **SelfUpdaterV2.cs**: Redirect auto-update downloads to fork releases.
 
-![linux](docs/res/linux_sm.png)  [Pre-reqs](docs/start/envlinux.md) | [Download](https://github.com/actions/runner/releases)
+Everything else matches upstream, including the build scripts and the contents of the runner package.
 
-### Note
+## Requirements
 
-Thank you for your interest in this GitHub repo, however, right now we are not taking contributions. 
+* Windows 1803 or later, any edition
+* Containers feature enabled
+* Docker installed on Windows ([setup guide](https://boxofcables.dev/a-lightweight-windows-container-dev-environment/))
+* For Hyper-V isolation: Windows Pro or Enterprise with Hyper-V and Virtual Machine Platform enabled
 
-We continue to focus our resources on strategic areas that help our customers be successful while making developers' lives easier. While GitHub Actions remains a key part of this vision, we are allocating resources towards other areas of Actions and are not taking contributions to this repository at this time. The GitHub public roadmap is the best place to follow along for any updates on features we’re working on and what stage they’re in.
+## Releases
 
-We are taking the following steps to better direct requests related to GitHub Actions, including:
+Windows x64 and ARM64 packages are published to [Releases](https://github.com/sirredbeard/runner/releases) and track upstream versions.
 
-1. We will be directing questions and support requests to our [Community Discussions area](https://github.com/orgs/community/discussions/categories/actions)
+Windows Container images are published to GitHub Container Registry, based on Windows Server Core ltsc2025:
 
-2. High Priority bugs can be reported through Community Discussions or you can report these to our support team https://support.github.com/contact/bug-report.
+* `ghcr.io/sirredbeard/actions-runner:latest-amd64`
+* `ghcr.io/sirredbeard/actions-runner:latest-arm64`
+* `ghcr.io/sirredbeard/actions-runner:2.336.0-amd64`
+* `ghcr.io/sirredbeard/actions-runner:2.336.0-arm64`
 
-3. Security Issues should be handled as per our [SECURITY.md](https://github.com/actions/runner?tab=security-ov-file)
+## Auto-update
 
-We will still provide security updates for this project and fix major breaking changes during this time.
+GitHub's backend sends update messages pointing at `actions/runner` release assets. In RELEASE builds, the runner rewrites that URL to the matching fork release:
 
-You are welcome to still raise bugs in this repo.
+```
+From: https://github.com/actions/runner/releases/download/v{version}/actions-runner-win-{arch}-{version}.zip
+To:   https://github.com/sirredbeard/runner/releases/download/v{version}/actions-runner-win-{arch}-{version}.zip
+```
+
+No configuration is needed. DEBUG builds keep the original upstream URLs.
+
+Each release ships a `.sha256` asset next to its ZIP, and the runner validates the download against it before installing. If that asset cannot be fetched, the update proceeds without hash validation.
+
+## Usage
+
+Configuring and using self-hosted runners is unchanged from upstream:
+
+* [Adding self-hosted runners](https://docs.github.com/en/actions/hosting-your-own-runners/managing-self-hosted-runners/adding-self-hosted-runners)
+* [Using self-hosted runners in a workflow](https://docs.github.com/en/actions/hosting-your-own-runners/managing-self-hosted-runners/using-self-hosted-runners-in-a-workflow)
+
+## Support
+
+This is a personal fork. Support is best effort.
+
+File Windows Container issues here. File anything reproducible on an upstream runner at [actions/runner](https://github.com/actions/runner).
+
+## Acknowledgments
+
+* [actions/runner](https://github.com/actions/runner) by GitHub
+* Windows Container support based in part on [PR #1801](https://github.com/actions/runner/pull/1801) by [Szymon Sobik](https://github.com/SS1823)
