@@ -203,7 +203,14 @@ jobs:
 
   publish-image:
     needs: release
+    # Container image publishing is best-effort and must never block the binary build/release.
+    # The win-x64 and win-arm64 runner BINARIES are produced by the build/release jobs above.
+    # arm64 Windows container images require a self-hosted arm64 Windows host with Docker
+    # (GitHub-hosted windows-11-arm runners have no Docker installed), so that matrix leg is
+    # allowed to fail without failing the workflow.
+    continue-on-error: true
     strategy:
+      fail-fast: false
       matrix:
         platform: [ windows/amd64, windows/arm64 ]
         include:
