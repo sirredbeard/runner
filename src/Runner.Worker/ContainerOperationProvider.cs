@@ -285,6 +285,14 @@ namespace GitHub.Runner.Worker
                 var configEnvFormat = "--format \"{{range .Config.Env}}{{println .}}{{end}}\"";
                 var containerEnv = await _dockerManager.DockerInspect(executionContext, container.ContainerId, configEnvFormat);
                 container.ContainerRuntimePath = DockerUtil.ParsePathFromConfigEnv(containerEnv);
+                if (string.IsNullOrEmpty(container.ContainerRuntimePath) && Constants.Runner.Platform == Constants.OSPlatform.Windows)
+                {
+                    // Windows images usually don't declare PATH in .Config.Env, so read the container's
+                    // real PATH; otherwise a GITHUB_PATH write clobbers it via `docker exec -e PATH=`.
+                    var runtimePath = new List<string>();
+                    await _dockerManager.DockerExec(executionContext, container.ContainerId, string.Empty, "cmd /c echo %PATH%", runtimePath);
+                    container.ContainerRuntimePath = string.Join("", runtimePath).Trim();
+                }
                 executionContext.JobContext.Container["id"] = new StringContextData(container.ContainerId);
             }
             executionContext.Output("##[endgroup]");
