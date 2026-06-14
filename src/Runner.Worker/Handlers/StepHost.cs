@@ -250,7 +250,7 @@ namespace GitHub.Runner.Worker.Handlers
             if (!string.IsNullOrEmpty(PrependPath))
             {
                 // Prepend tool paths to container's PATH
-                var fullPath = !string.IsNullOrEmpty(Container.ContainerRuntimePath) ? $"{PrependPath}:{Container.ContainerRuntimePath}" : PrependPath;
+                var fullPath = !string.IsNullOrEmpty(Container.ContainerRuntimePath) ? $"{PrependPath}{System.IO.Path.PathSeparator}{Container.ContainerRuntimePath}" : PrependPath;
                 dockerCommandArgs.Add($"-e PATH=\"{fullPath}\"");
             }
 
