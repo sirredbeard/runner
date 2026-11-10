@@ -35,8 +35,8 @@ jobs:
           }
           try {
             const release = await github.rest.repos.getReleaseByTag({
-              owner: '${{ github.event.repository.owner.name }}',
-              repo: '${{ github.event.repository.name }}',
+              owner: context.repo.owner,
+              repo: context.repo.repo,
               tag: 'v' + runnerVersion
             })
             core.setFailed('Release with same tag already created: ' + release.data.html_url)
@@ -69,6 +69,13 @@ jobs:
     - name: Build & Layout Release
       run: |
         ${{ matrix.devScript }} layout Release ${{ matrix.runtime }}
+      working-directory: src
+
+    # Gate publication on the same x64 L0 tests used by Runner CI. Automated
+    # GITHUB_TOKEN pushes do not trigger that separate workflow.
+    - name: L0
+      if: matrix.runtime == 'win-x64'
+      run: ${{ matrix.devScript }} test
       working-directory: src
 
     # Create runner package tar.gz/zip

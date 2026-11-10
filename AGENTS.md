@@ -8,11 +8,14 @@ This fork maintains exactly **one commit ahead** of upstream actions/runner. All
 
 ## Repository Structure
 
+The ahead/behind badge against `actions/runner:main` is not the invariant: the
+single fork patch is based on a published upstream release tag.
+
 ### The One Commit Strategy
 
 The entire fork is structured as:
 ```
-upstream/main (actions/runner)
+upstream release tag (actions/runner)
     ↓
 [One Commit: "Add Windows Containers Support"]
     ↓
@@ -39,8 +42,9 @@ This single commit contains:
    - Resets local main to the new upstream release tag
    - Cherry-picks the single Windows Container commit on top
    - Updates `releaseVersion` file to match upstream
-   - Force-pushes to trigger release workflow
-3. If no new release, does nothing
+   - Force-pushes, then explicitly dispatches the release workflow (GITHUB_TOKEN pushes do not trigger push workflows)
+3. If source is already current but its fork release is missing, dispatches CD again.
+4. Rejects unexpected patch history before resetting; repeated failures reuse an open issue.
 
 **Key files:**
 - `.github/workflows/merge_upstream.yml`
@@ -69,6 +73,7 @@ This single commit contains:
 **What it does:**
 1. **Check job:** Validates version hasn't been released yet
 2. **Build jobs:** Builds win-x64 and win-arm64
+   - Runs x64 L0 tests before packaging; a failure blocks publication
    - Computes SHA256 checksums
    - Uploads binary ZIPs and SHA256 files as artifacts
 3. **Release job:** 
@@ -204,32 +209,30 @@ The single commit modifies these files for Windows Container support:
 3. **src/Runner.Service/Windows/RunnerService.csproj**
    - Updates .NET Framework target from 4.7 to 4.8 for ARM64 compatibility
 
-4. **src/Runner.Listener/Runner.cs**
-   - Version output displays simple version number compatible with upstream patterns
-
-5. **src/Runner.Listener/SelfUpdater.cs**
+4. **src/Runner.Listener/SelfUpdater.cs**
    - Intercepts update URLs from GitHub's backend messages
    - Redirects `actions/runner` URLs to `sirredbeard/runner` fork releases
    - Validates fork releases using SHA256 checksums before installation
    - Redirect logic only active in RELEASE builds (wrapped in `#if !DEBUG`)
    - Backward compatible with upstream runner behavior
 
-6. **src/Runner.Listener/SelfUpdaterV2.cs**
+5. **src/Runner.Listener/SelfUpdaterV2.cs**
    - Same redirect and validation logic as SelfUpdater for newer update message flows
    - Intercepts PackageMetadata messages and applies fork URL redirection
    - Validates SHA256 before downloading and extracting updated runner
 
-7. **Workflow files:**
+6. **Workflow files:**
    - Deleted: Most upstream workflow files (CodeQL, dependency checks, bots, etc.)
-   - Modified: build.yml (Windows-only), release.yml (Windows binaries + Docker), docker-publish.yml
+   - Modified: build.yml (Windows-only), release.yml (Windows binaries + Docker)
+   - Deleted: docker-publish.yml (image publishing is part of release.yml)
    - Added: merge_upstream.yml (daily sync automation)
 
-5. **images/Dockerfile**
+7. **images/Dockerfile**
    - Converted from Ubuntu-based to Windows Server Core (ltsc2025) based
    - Downloads runner from fork's releases instead of building
    - Supports both amd64 and arm64 architectures
 
-6. **README.md**
+8. **README.md**
    - Updated for Windows Container fork
    - Removed TODO items after automation completed
 
@@ -267,11 +270,19 @@ The automation handles this, but manual verification:
 3. Verify CD released correct version
 4. Download and spot-check one architecture against upstream
 
+### Verify scheduling after deployment
+
+The latest observed scheduled run was July 19, 2026, despite the API reporting
+`active`; the cause has not been confirmed. After landing, check the Actions page
+for a disabled-schedule banner and re-enable the workflow if needed. Dispatch sync
+manually once, then verify a subsequent scheduled run actually appears. A manual
+run alone does not prove the schedule is working.
+
 ### Manual Sync (if needed)
 
 ```bash
 git fetch upstream
-git reset --hard upstream/main
+git reset --hard <upstream-release-tag>
 git cherry-pick <windows-container-commit>
 # Update releaseVersion and releaseNote.md to match upstream tag, then squash into the single commit
 git add releaseVersion releaseNote.md
